@@ -235,66 +235,72 @@ struct ContentView: View {
 
     // Widok sekcji postępu przesyłania
     private var uploadProgressSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if isExporting {
-                HStack {
-                    Text("Eksportowanie wideo...")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                    Spacer()
-                    Text("\(Int(exportProgress * 100))%")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                }
-                ProgressView(value: exportProgress)
-                    .progressViewStyle(LinearProgressViewStyle())
-                    .tint(.blue)
-            }
-
-            ForEach(uploadProgressItems.indices, id: \.self) { index in
-                let item = uploadProgressItems[index]
-                HStack {
-                    Text(item.filename)
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                    Spacer()
-                    if item.isCompleted {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                    } else {
-                        Text("\(Int(item.progress * 100))%")
+        
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                if isExporting {
+                    HStack {
+                        Text("Eksportowanie wideo...")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                        Spacer()
+                        Text("\(Int(exportProgress * 100))%")
                             .font(.subheadline)
                             .foregroundColor(.gray)
                     }
+                    ProgressView(value: exportProgress)
+                        .progressViewStyle(LinearProgressViewStyle())
+                        .tint(.blue)
+                        .animation(.easeInOut, value: exportProgress)
                 }
-                ProgressView(value: item.progress)
+
+                ForEach(uploadProgressItems.indices, id: \.self) { index in
+                    let item = uploadProgressItems[index]
+                    HStack {
+                        Text(item.filename)
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                        Spacer()
+                        if item.isCompleted {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        } else {
+                            Text("\(Int(item.progress * 100))%")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    ProgressView(value: item.progress)
+                        .progressViewStyle(LinearProgressViewStyle())
+                        .tint(item.filename.hasSuffix(".MOV") || item.filename.hasSuffix(".mp4") ? .purple : .blue)
+                        .animation(.easeInOut, value: item.progress)
+                }
+
+                HStack {
+                    Text("Całkowity postęp")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    Spacer()
+                    Text("\(Int(overallProgress * 100))%")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                }
+                ProgressView(value: overallProgress)
                     .progressViewStyle(LinearProgressViewStyle())
-                    .tint(.blue)
-            }
+                    .tint(.green)
+                    .animation(.easeInOut, value: overallProgress)
 
-            HStack {
-                Text("Całkowity postęp")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                Spacer()
-                Text("\(Int(overallProgress * 100))%")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
+                if !statusMessage.isEmpty {
+                    Text(statusMessage)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .padding(.top, 5)
+                }
             }
-            ProgressView(value: overallProgress)
-                .progressViewStyle(LinearProgressViewStyle())
-                .tint(.green)
-
-            if !statusMessage.isEmpty {
-                Text(statusMessage)
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .padding(.top, 5)
-            }
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(10)
         }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
     }
 
     // Widok wiersza pliku/folderu
