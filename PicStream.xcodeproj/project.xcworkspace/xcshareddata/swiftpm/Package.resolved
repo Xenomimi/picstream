@@ -1,0 +1,15 @@
+{
+  "originHash" : "9893a28f3a1e89d59d47f415330b776be52a995395be654f9cc3cc53b9fab889",
+  "pins" : [
+    {
+      "identity" : "amsmb2",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/amosavian/AMSMB2",
+      "state" : {
+        "revision" : "0e8a77612c6dc8048c4093ed7a00089bb1238102",
+        "version" : "4.0.2"
+      }
+    }
+  ],
+  "version" : 3
+}
