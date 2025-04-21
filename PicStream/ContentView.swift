@@ -48,11 +48,13 @@ struct ContentView: View {
     @State private var isConnected: Bool = false
     @State private var selectedMedia: [PhotosPickerItem] = []
     @State private var isUploading: Bool = false
+    @State private var isExporting: Bool = false
     @State private var navigationPath = NavigationPath() // Do śledzenia ścieżki w NavigationStack
 
     // Stany do śledzenia postępu przesyłania
     @State private var uploadProgressItems: [UploadProgress] = []
     @State private var overallProgress: Double = 0.0
+    @State private var exportProgress: Double = 0.0
     @State private var showProgressView: Bool = false
 
     // Nowe stany
@@ -233,48 +235,66 @@ struct ContentView: View {
 
     // Widok sekcji postępu przesyłania
     private var uploadProgressSection: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("Ogólny postęp:")
-                Spacer()
-                Text("\(Int(overallProgress * 100))%")
+        VStack(alignment: .leading, spacing: 10) {
+            if isExporting {
+                HStack {
+                    Text("Eksportowanie wideo...")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    Spacer()
+                    Text("\(Int(exportProgress * 100))%")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                }
+                ProgressView(value: exportProgress)
+                    .progressViewStyle(LinearProgressViewStyle())
+                    .tint(.blue)
             }
-            ProgressView(value: overallProgress)
-                .progressViewStyle(LinearProgressViewStyle(tint: .blue))
-                .animation(.easeInOut, value: overallProgress)
 
-            ScrollView {
-                VStack(spacing: 8) {
-                    ForEach(uploadProgressItems) { item in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text(item.filename)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                                if item.isCompleted {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.green)
-                                } else {
-                                    Text("\(Int(item.progress * 100))%")
-                                        .font(.caption)
-                                }
-                            }
-                            ProgressView(value: item.progress)
-                                .progressViewStyle(LinearProgressViewStyle(tint: item.isCompleted ? .green : .blue))
-                                .animation(.easeInOut, value: item.progress)
-                        }
-                        .padding(.vertical, 4)
+            ForEach(uploadProgressItems.indices, id: \.self) { index in
+                let item = uploadProgressItems[index]
+                HStack {
+                    Text(item.filename)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    Spacer()
+                    if item.isCompleted {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    } else {
+                        Text("\(Int(item.progress * 100))%")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
                     }
                 }
-                .padding(.horizontal) // Dodaj padding wewnątrz ScrollView
+                ProgressView(value: item.progress)
+                    .progressViewStyle(LinearProgressViewStyle())
+                    .tint(.blue)
             }
-            .frame(maxHeight: 150) // Ogranicz wysokość
-            .background(Color(.systemGray6))
-            .cornerRadius(10)
+
+            HStack {
+                Text("Całkowity postęp")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                Spacer()
+                Text("\(Int(overallProgress * 100))%")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+            }
+            ProgressView(value: overallProgress)
+                .progressViewStyle(LinearProgressViewStyle())
+                .tint(.green)
+
+            if !statusMessage.isEmpty {
+                Text(statusMessage)
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+                    .padding(.top, 5)
+            }
         }
-        .transition(.opacity.combined(with: .scale)) // Animacja pojawiania się/znikania
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(10)
     }
 
     // Widok wiersza pliku/folderu
@@ -563,11 +583,11 @@ struct ContentView: View {
             errorToShow = ErrorInfo(message: "Wybierz przynajmniej jeden plik do przesłania!")
             return
         }
-        guard !isUploading else { return } // Zapobiegaj podwójnemu kliknięciu
+        guard !isUploading else { return }
 
         isUploading = true
         showProgressView = true
-        uploadProgressItems = [] // Resetuj listę postępu
+        uploadProgressItems = []
         overallProgress = 0.0
         statusMessage = "Przygotowuję przesyłanie..."
 
@@ -582,8 +602,7 @@ struct ContentView: View {
                     uploadProgressItems.append(UploadProgress(filename: originalFilename, progress: 0.0))
                     print("Using original filename: \(originalFilename)")
                 } else {
-                    // Fallback: generuj nazwę z odpowiednim rozszerzeniem na podstawie typu mediów
-                    var fileExtension = "dat" // Domyślne, rzadko używane
+                    var fileExtension = "dat"
                     var filePrefix = "MEDIA"
 
                     if asset.mediaType == .image {
@@ -604,7 +623,7 @@ struct ContentView: View {
 
             // 2. Przesyłaj pliki
             do {
-                let client = try await connect() // Upewnij się, że mamy połączenie
+                let client = try await connect()
 
                 for (index, mediaInfo) in mediaToUpload.enumerated() {
                     let (asset, filename) = mediaInfo
@@ -612,18 +631,25 @@ struct ContentView: View {
 
                     print("Attempting to upload: \(filename) to \(targetPath)")
 
-                    // Użyj PHImageManager do uzyskania danych zdjęcia/filmu
                     let manager = PHImageManager.default()
                     let options = PHImageRequestOptions()
                     options.isSynchronous = false
                     options.isNetworkAccessAllowed = true
                     options.deliveryMode = .highQualityFormat
 
+                    // Utwórz tymczasowy plik dla zdjęcia lub wideo
+                    let tempURL: URL
                     if asset.mediaType == .image {
-                        let result: Result<Data, Error> = await withCheckedContinuation { continuation in
+                        tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).jpg")
+                        let result: Result<URL, Error> = await withCheckedContinuation { continuation in
                             manager.requestImageDataAndOrientation(for: asset, options: options) { data, _, _, info in
                                 if let data = data {
-                                    continuation.resume(returning: .success(data))
+                                    do {
+                                        try data.write(to: tempURL)
+                                        continuation.resume(returning: .success(tempURL))
+                                    } catch {
+                                        continuation.resume(returning: .failure(error))
+                                    }
                                 } else {
                                     let error = info?[PHImageErrorKey] as? Error ?? NSError(domain: "ImageError", code: -1, userInfo: nil)
                                     continuation.resume(returning: .failure(error))
@@ -632,45 +658,21 @@ struct ContentView: View {
                         }
 
                         switch result {
-                        case .success(let data):
-                            print("Loaded data for \(filename), size: \(data.count) bytes.")
-                            try await client.write(data: data, toPath: targetPath, progress: { progressValue in
-                                // Normalizuj wartość postępu
-                                let normalizedProgress = min(max(Double(progressValue) / 100.0, 0.0), 1.0)
-                                print("Progress for \(filename): \(progressValue)% -> \(normalizedProgress)")
-
-                                // Aktualizuj postęp dla tego pliku
-                                DispatchQueue.main.async {
-                                    if index < uploadProgressItems.count {
-                                        uploadProgressItems[index].progress = normalizedProgress
-                                        let totalProgress = uploadProgressItems.reduce(0.0) { $0 + $1.progress }
-                                        overallProgress = totalProgress / Double(uploadProgressItems.count)
-                                    }
-                                }
-                                return true
-                            })
-
-                            // Oznacz jako ukończony
-                            DispatchQueue.main.async {
-                                if index < uploadProgressItems.count {
-                                    uploadProgressItems[index].progress = 1.0
-                                    uploadProgressItems[index].isCompleted = true
-                                    let totalProgress = uploadProgressItems.reduce(0.0) { $0 + $1.progress }
-                                    overallProgress = totalProgress / Double(uploadProgressItems.count)
-                                }
-                            }
-                            uploadedCount += 1
-                            print("Successfully uploaded \(filename)")
+                        case .success:
+                            // tempURL już ma poprawną wartość
+                            break
                         case .failure(let error):
-                            print("Failed to load data for \(filename): \(error). Skipping.")
+                            print("Failed to export image for \(filename): \(error)")
                             DispatchQueue.main.async {
                                 if index < uploadProgressItems.count {
                                     uploadProgressItems[index].progress = 0.0
                                 }
                             }
+                            continue
                         }
                     } else if asset.mediaType == .video {
-                        let result: Result<Data, Error> = await withCheckedContinuation { continuation in
+                        tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).mov")
+                        let result: Result<URL, Error> = await withCheckedContinuation { continuation in
                             manager.requestAVAsset(forVideo: asset, options: nil) { avAsset, _, info in
                                 guard let avAsset = avAsset else {
                                     let error = info?[PHImageErrorKey] as? Error ?? NSError(domain: "VideoError", code: -1, userInfo: nil)
@@ -678,70 +680,127 @@ struct ContentView: View {
                                     return
                                 }
 
-                                // Eksportuj wideo do tymczasowego pliku
-                                if let urlAsset = avAsset as? AVURLAsset {
-                                    let url = urlAsset.url
+                                Task {
                                     do {
-                                        let data = try Data(contentsOf: url)
-                                        continuation.resume(returning: .success(data))
-                                    } catch {
-                                        continuation.resume(returning: .failure(error))
-                                    }
-                                } else {
-                                    let exporter = AVAssetExportSession(asset: avAsset, presetName: AVAssetExportPresetHighestQuality)
-                                    let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString).mov")
-                                    exporter?.outputURL = tempURL
-                                    exporter?.outputFileType = .mov
-                                    exporter?.exportAsynchronously {
-                                        if exporter?.status == .completed, let data = try? Data(contentsOf: tempURL) {
-                                            continuation.resume(returning: .success(data))
-                                            try? FileManager.default.removeItem(at: tempURL)
-                                        } else {
-                                            let error = exporter?.error ?? NSError(domain: "VideoExportError", code: -1, userInfo: nil)
+                                        let exporter = AVAssetExportSession(asset: avAsset, presetName: AVAssetExportPresetHighestQuality)
+                                        guard let exporter = exporter else {
+                                            let error = NSError(domain: "VideoExportError", code: -1, userInfo: nil)
                                             continuation.resume(returning: .failure(error))
+                                            return
                                         }
+
+                                        // Monitoruj postęp eksportu
+                                        DispatchQueue.main.async {
+                                            isExporting = true
+                                            exportProgress = 0.0
+                                            statusMessage = "Eksportowanie wideo: \(filename)..."
+                                        }
+
+                                        Task {
+                                            while exporter.progress < 1.0 {
+                                                DispatchQueue.main.async {
+                                                    exportProgress = Double(exporter.progress)
+                                                    print("Export progress for \(filename): \(exportProgress * 100)%")
+                                                }
+                                                try await Task.sleep(nanoseconds: 500_000_000) // 0.5 sekundy
+                                            }
+                                            DispatchQueue.main.async {
+                                                exportProgress = 1.0
+                                                isExporting = false
+                                                statusMessage = "Eksport zakończony. Przygotowuję przesyłanie..."
+                                            }
+                                        }
+
+                                        try await exporter.export(to: tempURL, as: .mov)
+                                        continuation.resume(returning: .success(tempURL))
+                                    } catch {
+                                        DispatchQueue.main.async {
+                                            isExporting = false
+                                            exportProgress = 0.0
+                                        }
+                                        continuation.resume(returning: .failure(error))
                                     }
                                 }
                             }
                         }
 
                         switch result {
-                        case .success(let data):
-                            print("Loaded data for \(filename), size: \(data.count) bytes.")
-                            try await client.write(data: data, toPath: targetPath, progress: { progressValue in
-                                // Normalizuj wartość postępu
-                                let normalizedProgress = min(max(Double(progressValue) / 100.0, 0.0), 1.0)
-                                print("Progress for \(filename): \(progressValue)% -> \(normalizedProgress)")
-
-                                // Aktualizuj postęp dla tego pliku
-                                DispatchQueue.main.async {
-                                    if index < uploadProgressItems.count {
-                                        uploadProgressItems[index].progress = normalizedProgress
-                                        let totalProgress = uploadProgressItems.reduce(0.0) { $0 + $1.progress }
-                                        overallProgress = totalProgress / Double(uploadProgressItems.count)
-                                    }
-                                }
-                                return true
-                            })
-
-                            // Oznacz jako ukończony
-                            DispatchQueue.main.async {
-                                if index < uploadProgressItems.count {
-                                    uploadProgressItems[index].progress = 1.0
-                                    uploadProgressItems[index].isCompleted = true
-                                    let totalProgress = uploadProgressItems.reduce(0.0) { $0 + $1.progress }
-                                    overallProgress = totalProgress / Double(uploadProgressItems.count)
-                                }
-                            }
-                            uploadedCount += 1
-                            print("Successfully uploaded \(filename)")
+                        case .success:
+                            // tempURL już ma poprawną wartość
+                            break
                         case .failure(let error):
-                            print("Failed to load data for \(filename): \(error). Skipping.")
+                            print("Failed to export video for \(filename): \(error)")
                             DispatchQueue.main.async {
                                 if index < uploadProgressItems.count {
                                     uploadProgressItems[index].progress = 0.0
                                 }
                             }
+                            continue
+                        }
+                    } else {
+                        print("Unsupported media type for \(filename)")
+                        DispatchQueue.main.async {
+                            if index < uploadProgressItems.count {
+                                uploadProgressItems[index].progress = 0.0
+                            }
+                        }
+                        continue
+                    }
+
+                    // Przesyłanie pliku
+                    do {
+                        let fileSize = try FileManager.default.attributesOfItem(atPath: tempURL.path)[.size] as? Int64 ?? 0
+                        print("Prepared to upload \(filename), size: \(fileSize) bytes.")
+
+                        // Przesyłaj cały plik za jednym razem, korzystając z wbudowanego postępu w metodzie write
+                        let fileData = try Data(contentsOf: tempURL, options: .mappedIfSafe)
+                        try await client.write(data: fileData, toPath: targetPath, progress: { bytesWritten in
+                            let progress = Double(bytesWritten) / Double(fileSize)
+                            print("Upload progress for \(filename): \(progress * 100)%")
+
+                            DispatchQueue.main.async {
+                                if index < uploadProgressItems.count {
+                                    uploadProgressItems[index].progress = progress
+                                    let totalProgress = uploadProgressItems.reduce(0.0) { $0 + $1.progress }
+                                    overallProgress = totalProgress / Double(uploadProgressItems.count)
+                                }
+                            }
+                            return true
+                        })
+
+                        // Usuń tymczasowy plik po przesłaniu
+                        print("Attempting to remove temporary file at: \(tempURL.path)")
+                        do {
+                            try FileManager.default.removeItem(at: tempURL)
+                            print("Successfully removed temporary file at: \(tempURL.path)")
+                        } catch {
+                            print("Failed to remove temporary file at: \(tempURL.path), error: \(error)")
+                        }
+
+                        DispatchQueue.main.async {
+                            if index < uploadProgressItems.count {
+                                uploadProgressItems[index].progress = 1.0
+                                uploadProgressItems[index].isCompleted = true
+                                let totalProgress = uploadProgressItems.reduce(0.0) { $0 + $1.progress }
+                                overallProgress = totalProgress / Double(uploadProgressItems.count)
+                            }
+                        }
+                        uploadedCount += 1
+                        print("Successfully uploaded \(filename)")
+                    } catch {
+                        print("Failed to upload \(filename): \(error)")
+                        DispatchQueue.main.async {
+                            if index < uploadProgressItems.count {
+                                uploadProgressItems[index].progress = 0.0
+                            }
+                        }
+                        // Usuń tymczasowy plik w przypadku błędu
+                        print("Attempting to remove temporary file at: \(tempURL.path)")
+                        do {
+                            try FileManager.default.removeItem(at: tempURL)
+                            print("Successfully removed temporary file at: \(tempURL.path)")
+                        } catch {
+                            print("Failed to remove temporary file at: \(tempURL.path), error: \(error)")
                         }
                     }
                 }
@@ -762,7 +821,6 @@ struct ContentView: View {
                     loadDirectoryContents()
                 }
             } catch {
-                // 4. Obsługa błędu
                 print("Error during upload: \(error)")
                 DispatchQueue.main.async {
                     errorToShow = ErrorInfo(message: "Błąd przesyłania pliku: \(error.localizedDescription)")
